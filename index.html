@@ -10,9 +10,10 @@
 	<div id="container"></div>
 	<script type="text/javascript">
 		var Text = Regular.extend({
-			template:"<div>{text}</div>",
+			template:"<div><div>{text}</div><div>{value}</div></div>",
 			data:{
-				text:'文字'
+				text:'这是text的值，稍后要修改',
+				value:'这是value的值'
 			}
 		})
 		var text = new Text();
@@ -21,7 +22,6 @@
 
 	<script type="text/javascript">
 		var changeText = function(){
-			debugger;
 			var inputEle = document.getElementById('inputEle')
 			var value = inputEle.value;
 			text.data.text = value;
