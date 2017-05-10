@@ -22,12 +22,6 @@ _.createProto = function(Fn, proto){
 	return (Fn.prototype = new Foo());
 }
 
-_.escapeRegExp = function( str){// Credit: XRegExp 0.6.1 (c) 2007-2008 Steven Levithan <http://stevenlevithan.com/regex/xregexp/> MIT License
-  return str.replace(/[-[\]{}()*+?.\\^$|,#\s]/g, function(match){
-    return '\\' + match;
-  });
-};
-
 _.typeOf = function (o) {
   return o == null ? String(o) :o2str.call(o).slice(8, -1).toLowerCase();
 }

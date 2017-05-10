@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>regular bundle</title>
+	<script type="text/javascript" src='./dist/bundle.js' ></script>
+</head>
+<body>
+	<h1>调bug</h1>
+	<div id="container"></div>
+	<script type="text/javascript">
+		var Text = Regular.extend({
+			template:"<div>{text}</div>",
+			data:{
+				text:'文字'
+			}
+		})
+		var text = new Text();
+		text.$inject(document.getElementById('container'))
+	</script>
+
+	<script type="text/javascript">
+		var changeText = function(){
+			debugger;
+			var inputEle = document.getElementById('inputEle')
+			var value = inputEle.value;
+			text.data.text = value;
+			text.$update()
+			inputEle.value = ''
+		}
+	</script>
+	<input id='inputEle' type="text" placeholder="要修改的数据" name="">
+	<button onclick="changeText()">修改</button>
+</body>
+</html>

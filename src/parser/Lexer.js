@@ -1,359 +1,203 @@
 var _ = require("../util.js");
-var config = require("../config.js");
 
-// some custom tag  will conflict with the Lexer progress
-var conflictTag = {"}": "{", "]": "["}, map1, map2;
-// some macro for lexer
-var macro = {
-  // NAME ä»¥ :_å­—æ¯ å¼€å¤´ï¼Œå…¶ä»–ä¸º -.:_å­—æ¯æ•°å­— 
-  'NAME': /(?:[:_A-Za-z][-\.:_0-9A-Za-z]*)/,
-  // IDENT ä»¥ $_å­—æ¯ å¼€å¤´,å…¶ä»–ä¸º _æ•°å­—å­—æ¯$
-  'IDENT': /[\$_A-Za-z][_0-9A-Za-z\$]*/,
-  // æ¢è¡Œæ¢é¡µç­‰
-  'SPACE': /[\r\n\t\f ]/
+
+var rules = {
+	//INIT Æ¥ÅäÆğÊ¼µã Èç <div Ö®Ç°µÄ¿Õ°×
+	ENTER_JST: [/^[\s]*?(?=\{)/, function(all){
+	  this.enter('JST');
+	  if(all) return {type: 'TEXT', value: all}
+	}],
+	ENTER_TAG:[/[^\x00]*?(?=<[\w\/\!])/, function(all){ 
+    	this.enter('TAG');
+    	if(all) return {type: 'TEXT', value: all}
+  	}],
+
+  	//TAG Æ¥Åä
+  	TAG_OPEN:[/<([a-zA-Z]*)\s*/, function(all, one){ //allÎª<div oneÎªdiv
+    	return {type: 'TAG_OPEN', value: one}
+  	}, 'TAG'],
+  	TAG_NAME:[/[a-zA-Z\-]+/,'NAME','TAG'],
+  	TAG_SPACE:[/[\r\n\t\f]+/, null, 'TAG'],
+  	TAG_STRING:[ /'([^']*)'|"([^"]*)\"/, function(all, one, two){ 
+    	var value = one || two || "";
+    	return {type: 'STRING', value: value}
+  	}, 'TAG'],
+  	TAG_CLOSE:[/<\/([a-zA-Z]*)[\r\n\f\t ]*>/, function(all, one){
+    	this.leave();
+   		return {type: 'TAG_CLOSE', value: one }
+  	}, 'TAG'],
+  	TAG_PUNCHOR:[/[>]/,function(all){
+  		this.leave();
+  		return {type:'>',value:all}
+  	},'TAG'],
+
+  	//JST Æ¥Åä
+  	JST_EXPR_OPEN:[/{/,function(all){
+  		return {
+  			type:'EXPR_OPEN',
+  			ESCAPE:false
+  		}
+  	},'JST'],
+  	JST_IDENT:[/[a-zA-Z\.]+/,function(all){
+  		return {type:'IDENT',value:all}
+  	},'JST'],
+  	JST_SPACE:[/[ \r\n\f]+/,null,'JST'],
+  	JST_LEAVE:[/}/,function(all){
+  		this.leave('JST')
+  		return {
+  			type:'END',
+  			value:all
+  		}
+  	},'JST']
 }
+/**
+ * °´¹æÔòÉú³É¶ÔÓ¦µÄmap
+ */
+var MAP = genMap([
+//Éú³É¶ÔÓ¦µÄmap£¬°üÀ¨ init/tagµÈ£¬Ã¿¸ö°üÀ¨ rules/links
+	rules.ENTER_JST
+	,rules.ENTER_TAG
 
-function Lexer(input, opts){
-  if(conflictTag[config.END]){
-    this.markStart = conflictTag[config.END]; //{
-    this.markEnd = config.END; // }
-  }
+ 	,rules.TAG_CLOSE
+  	,rules.TAG_OPEN
+  	,rules.TAG_NAME
+ 	,rules.TAG_SPACE
+	,rules.TAG_STRING
+	,rules.TAG_PUNCHOR,
 
-  this.input = (input||"").trim();
-  this.opts = opts || {};
-  this.map = this.opts.mode !== 2?  map1: map2; //åˆå§‹åŒ–åçš„map
-  this.states = ["INIT"];
-  if(opts && opts.expression){
-     this.states.push("JST"); 
-     this.expression = true;
-  }
-}
-
-var lo = Lexer.prototype
-
-
-lo.lex = function(str){
-  str = (str || this.input).trim(); //new Lexeræ—¶è¾“å…¥çš„ç¬¬ä¸€ä¸ªå‚æ•°
-  var tokens = [], split, test,mlen, token, state;
-  this.input = str, 
-  this.marks = 0;
-  // init the pos index
-  this.index=0;
-  var i = 0;
-  while(str){
-    i++
-    state = this.state(); //æœ€åçš„ä¸€ä¸ª this.states æœ‰INIT/JST
-    split = this.map[state] 
-    test = split.TRUNK.exec(str); //åŒ¹é…çš„å†…å®¹
-    if(!test){
-      this.error('Unrecoginized Token');
-    }
-    mlen = test[0].length;
-    str = str.slice(mlen) //INIT/JSTç­‰åˆ†åˆ«åŒ¹é…çš„é•¿åº¦
-    token = this._process.call(this, test, split, str)
-    if(token) tokens.push(token)
-    this.index += mlen;
-    // if(state == 'TAG' || state == 'JST') str = this.skipspace(str);
-  }
-
-  tokens.push({type: 'EOF'});
-  //[ç–‘é—® tokensçš„å½¢å¼]
-  return tokens;
-}
-
-lo.error = function(msg){
-}
-
-lo._process = function(args, split,str){
-  // console.log(args.join(","), this.state())
-  var links = split.links, marched = false, token;
-
-  for(var len = links.length, i=0;i<len ;i++){
-    var link = links[i],
-      handler = link[2],
-      index = link[0];
-    // if(args[6] === '>' && index === 6) console.log('haha')
-    if(testSubCapure(args[index])) {
-      marched = true;
-      if(handler){
-        //åŒ¹é…äº†ä¹‹åå°±è¿è¡Œå¯¹åº”çš„å‡½æ•°
-        token = handler.apply(this, args.slice(index, index + link[1]))
-        if(token)  token.pos = this.index;
-      }
-      break;
-    }
-  }
-  if(!marched){ // in ie lt8 . sub capture is "" but ont 
-    switch(str.charAt(0)){
-      case "<":
-        this.enter("TAG");
-        break;
-      default:
-        this.enter("JST");
-        break;
-    }
-  }
-  return token;
-}
-lo.enter = function(state){
-  this.states.push(state)
-  return this;
-}
-
-lo.state = function(){
-  var states = this.states;
-  return states[states.length-1];
-}
-
-lo.leave = function(state){
-  var states = this.states;
-  if(!state || states[states.length-1] === state) states.pop()
-}
-
-
-Lexer.setup = function(){
-  //ä¹‹å‰æœ‰ NAME/IDENT/SPACE /END/BEGIN
-  macro.END = config.END;
-  macro.BEGIN = config.BEGIN;
-
-  map1 = genMap([
-    // INIT
-    rules.ENTER_JST,
-    rules.ENTER_TAG,
-    rules.TEXT,
-
-    //TAG
-    rules.TAG_NAME,
-    rules.TAG_OPEN,
-    rules.TAG_CLOSE,
-    rules.TAG_PUNCHOR,
-    rules.TAG_ENTER_JST,
-    rules.TAG_UNQ_VALUE,
-    rules.TAG_STRING,
-    rules.TAG_SPACE,
-    rules.TAG_COMMENT,
-
-    // JST
-    rules.JST_OPEN,
-    rules.JST_CLOSE,
-    rules.JST_COMMENT,
-    rules.JST_EXPR_OPEN,
-    rules.JST_IDENT,
-    rules.JST_SPACE,
-    rules.JST_LEAVE,
-    rules.JST_NUMBER,
-    rules.JST_PUNCHOR,
-    rules.JST_STRING,
-    rules.JST_COMMENT
-    ])
-
-  // ignored the tag-relative token
-  map2 = genMap([
-    // INIT no < restrict
-    rules.ENTER_JST2,
-    rules.TEXT,
-    // JST
-    rules.JST_COMMENT,
-    rules.JST_OPEN,
-    rules.JST_CLOSE,
-    rules.JST_EXPR_OPEN,
-    rules.JST_IDENT,
-    rules.JST_SPACE,
-    rules.JST_LEAVE,
-    rules.JST_NUMBER,
-    rules.JST_PUNCHOR,
-    rules.JST_STRING,
-    rules.JST_COMMENT
-    ])
-}
-
+	rules.JST_EXPR_OPEN
+ 	,rules.JST_IDENT
+ 	,rules.JST_SPACE
+ 	,rules.JST_LEAVE
+])
 
 function genMap(rules){
-  var rule, map = {}, sign;
-  for(var i = 0, len = rules.length; i < len ; i++){
-    rule = rules[i]; // [æ­£åˆ™ï¼Œå‡½æ•°ï¼Œsign]
-    sign = rule[2] || 'INIT'; //INITã€TAG æˆ– JST
-    //å°†è§„åˆ™åˆ†å¼€å­˜æ”¾
-    ( map[sign] || (map[sign] = {rules:[], links:[]}) ).rules.push(rule);
-  }
-  return setup(map);
+	var rule, map = {}, sign;
+	for(var i = 0, len = rules.length; i < len ; i++){
+	  rule = rules[i]; // [ÕıÔò£¬º¯Êı£¬sign]
+	  sign = rule[2] || 'INIT'; //INIT¡¢TAG »ò JST
+	  //½«¹æÔò·Ö¿ª´æ·Å
+	  ( map[sign] || (map[sign] = {rules:[], links:[]}) ).rules.push(rule);
+	}
+	return setup(map);
 }
 
 function setup(map){
-  var split, rules, trunks, handler, reg, retain, rule;
-  function replaceFn(all, one){
-    //ã€ç–‘é—® è½¬ä¹‰ã€‘  
-    //macroå·²æœ‰çš„ NAME/IDENT/SPACE /END/BEGIN
-    return typeof macro[one] === 'string'? 
-      _.escapeRegExp(macro[one]) // -[\]{}()*+?.\\^$|,#\s å‰é¢éƒ½å¢åŠ æˆä¸¤ä¸ªæ–œæ ã€‚è½¬ä¹‰
-      : String(macro[one]).slice(1,-1);
-  }
+	var split, rules, trunks, handler, reg, retain, rule;
+	for(var i in map){
+	  // i Îª INIT/TAG/JST
+	  split = map[i];
+	  split.curIndex = 1;
+	  rules = split.rules;
+	  trunks = [];
 
-  for(var i in map){
-    // i ä¸º INIT/TAG/JST
-    split = map[i];
-    split.curIndex = 1;
-    rules = split.rules;
-    trunks = [];
+	  for(var j = 0,len = rules.length; j<len; j++){
+	    rule = rules[j]; 
+	    reg = rule[0]; //¶ÔÓ¦µÄÕıÔò±í´ïÊ½
+	    handler = rule[1]; //¶ÔÓ¦µÄº¯Êı
 
-    for(var j = 0,len = rules.length; j<len; j++){
-      rule = rules[j]; 
-      reg = rule[0]; //å¯¹åº”çš„æ­£åˆ™è¡¨è¾¾å¼
-      handler = rule[1]; //å¯¹åº”çš„å‡½æ•°
+	    if(_.typeOf(reg) === 'regexp') reg = reg.toString().slice(1, -1); //ÕıÔòµÄ±í´ïÊ½
 
-      if(typeof handler === 'string'){
-        handler = wrapHander(handler); //{type:handler,value:all}
-      }
-      if(_.typeOf(reg) === 'regexp') reg = reg.toString().slice(1, -1); //æ­£åˆ™çš„è¡¨è¾¾å¼
-
-      reg = reg.replace(/\{(\w+)\}/g, replaceFn) // \wä»£è¡¨å­—æ¯ã€æ•°å­—ã€ä¸‹åˆ’çº¿
-      retain = _.findSubCapture(reg) + 1; 
-      split.links.push([split.curIndex, retain, handler]); //ç°åœ¨çš„ç´¢å¼•ï¼Œæœ‰å‡ ä¸ªå­åŒ¹é…ï¼Œå‡½æ•°
-      split.curIndex += retain; //ä¸‹æ¬¡çš„ç´¢å¼•ï¼Œä¹Ÿå°±æ˜¯å‰é¢çš„ç´¢å¼•åŠ å­åŒ¹é…ä¸ªæ•°
-      trunks.push(reg); //æŠŠæ­£åˆ™è¡¨è¾¾å¼æ”¾å…¥
-    }
-    split.TRUNK = new RegExp("^(?:(" + trunks.join(")|(") + "))") //ç”Ÿæˆå®Œæ•´çš„æ­£åˆ™è¡¨è¾¾å¼
-  }
-  //mapæœ‰ INIT/TAG/JST
-  //æ¯ä¸ªé‡Œé¢æœ‰ curIndex/rules/links/TRUNK
-  return map;
+	    retain = _.findSubCapture(reg) + 1; 
+	    split.links.push([split.curIndex, retain, handler]); //ÏÖÔÚµÄË÷Òı£¬ÓĞ¼¸¸ö×ÓÆ¥Åä£¬º¯Êı
+	    split.curIndex += retain; //ÏÂ´ÎµÄË÷Òı£¬Ò²¾ÍÊÇÇ°ÃæµÄË÷Òı¼Ó×ÓÆ¥Åä¸öÊı
+	    trunks.push(reg); //°ÑÕıÔò±í´ïÊ½·ÅÈë
+	  }
+	  split.TRUNK = new RegExp("^(?:(" + trunks.join(")|(") + "))") //Éú³ÉÍêÕûµÄÕıÔò±í´ïÊ½
+	}
+	//mapÓĞ INIT/TAG/JST
+	//Ã¿¸öÀïÃæÓĞ curIndex/rules/links/TRUNK
+	return map;	
 }
 
-var rules = {
-
-  // 1. INIT
-  // ---------------
-
-  // mode1's JST ENTER RULE
-  // ã€ç–‘è§£ç­”é—®  \x00ä»£è¡¨ç»“æŸç¬¦ ç¼–ç¨‹è¯­è¨€è‡ªåŠ¨åœ¨åé¢æ·»åŠ  *?åŒ¹é…0æ¬¡æˆ–è€…å¤šæ¬¡ï¼Œä½†å°½é‡å°‘çš„åŒ¹é…ã€‘
-  ENTER_JST: [/[^\x00<]*?(?={BEGIN})/, function(all){
-    this.enter('JST');
-    if(all) return {type: 'TEXT', value: all}
-  }],
-
-  // mode2's JST ENTER RULE
-  ENTER_JST2: [/[^\x00]*?(?={BEGIN})/, function(all){
-    this.enter('JST');
-    if(all) return {type: 'TEXT', value: all}
-  }],
-  // \w åŒ¹é…æ‰€æœ‰å­—æ¯ã€æ•°å­—ã€ä¸‹åˆ’çº¿
-  ENTER_TAG: [/[^\x00]*?(?=<[\w\/\!])/, function(all){ 
-    this.enter('TAG');
-    if(all) return {type: 'TEXT', value: all}
-  }],
-
-  TEXT: [/[^\x00]+/, 'TEXT' ],
-
-  // 2. TAG
-  // --------------------
-  TAG_NAME: [/{NAME}/, 'NAME', 'TAG'],
-  TAG_UNQ_VALUE: [/[^\{}&"'=><`\r\n\f\t ]+/, 'UNQ', 'TAG'],
-  // \s åŒ¹é…ç©ºç™½ç¬¦ï¼ŒåŒ…æ‹¬è½¬ä¹‰ç¬¦ æ¢è¡Œã€å›è½¦ã€æ¢é¡µã€æ¨ªå‘åˆ¶è¡¨ã€çºµå‘åˆ¶è¡¨
-  // ä»¥ < å¼€å¤´çš„å­—ç¬¦ä¸²
-  TAG_OPEN: [/<({NAME})\s*/, function(all, one){ //"
-    return {type: 'TAG_OPEN', value: one}
-  }, 'TAG'],
-  //ä»¥ <\å¼€å¤´çš„ç»“å°¾ç¬¦
-  TAG_CLOSE: [/<\/({NAME})[\r\n\f\t ]*>/, function(all, one){
-    this.leave();
-    return {type: 'TAG_CLOSE', value: one }
-  }, 'TAG'],
-
-    // mode2's JST ENTER RULE
-    // åªè¦æœ‰ {BEGIN} å°±è¡Œï¼Œä¸ä¼šåŒ¹é…å…¶ä»–çš„ï¼Œå¦åˆ™è¿”å› null
-  TAG_ENTER_JST: [/(?={BEGIN})/, function(){
-    this.enter('JST');
-  }, 'TAG'],
-
-  // > / = & è¿™å››ä¸ªç¬¦å·éƒ½å¯ä»¥
-  TAG_PUNCHOR: [/[\>\/=&]/, function(all){
-    if(all === '>') this.leave();
-    return {type: all, value: all }
-  }, 'TAG'],
-  //ç”¨ '' æˆ–è€… "" åŒ¹é…çš„å†…å®¹
-  TAG_STRING:  [ /'([^']*)'|"([^"]*)\"/, /*'*/  function(all, one, two){ 
-    var value = one || two || "";
-
-    return {type: 'STRING', value: value}
-  }, 'TAG'],
-  //åŒ¹é… {SPACE}
-  TAG_SPACE: [/{SPACE}+/, null, 'TAG'],
-  //åŒ¹é… <!-- --> çš„å†…å®¹
-  TAG_COMMENT: [/<\!--([^\x00]*?)--\>/, function(all){
-    this.leave()
-    // this.leave('TAG')
-  } ,'TAG'],
-
-  // 3. JST
-  // -------------------
-  //åŒ¹é… {BEGIN}#{SPACE}å¤šä¸ª{IDENT}
-  JST_OPEN: ['{BEGIN}#{SPACE}*({IDENT})', function(all, name){
-    return {
-      type: 'OPEN',
-      value: name
-    }
-  }, 'JST'],
-  //åŒ¹é… {END}
-  JST_LEAVE: [/{END}/, function(all){
-    if(this.markEnd === all && this.expression) return {type: this.markEnd, value: this.markEnd};
-    if(!this.markEnd || !this.marks ){
-      this.firstEnterStart = false;
-      this.leave('JST');
-      return {type: 'END'}
-    }else{
-      this.marks--;
-      return {type: this.markEnd, value: this.markEnd}
-    }
-  }, 'JST'],
-  //åŒ¹é… {BEGIN}.../{IDENT}...{END}
-  JST_CLOSE: [/{BEGIN}\s*\/({IDENT})\s*{END}/, function(all, one){
-    this.leave('JST');
-    return {
-      type: 'CLOSE',
-      value: one
-    }
-  }, 'JST'],
-  //åŒ¹é… {BEGIN}!...!{END}
-  JST_COMMENT: [/{BEGIN}\!([^\x00]*?)\!{END}/, function(){
-    this.leave();
-  }, 'JST'],
-  //åŒ¹é… {BEGIN}
-  JST_EXPR_OPEN: ['{BEGIN}',function(all, one){
-    if(all === this.markStart){
-      if(this.expression) return { type: this.markStart, value: this.markStart };
-      if(this.firstEnterStart || this.marks){
-        this.marks++
-        this.firstEnterStart = false;
-        return { type: this.markStart, value: this.markStart };
-      }else{
-        this.firstEnterStart = true;
-      }
-    }
-    return {
-      type: 'EXPR_OPEN',
-      escape: false
-    }
-
-  }, 'JST'],
-  JST_IDENT: ['{IDENT}', 'IDENT', 'JST'],
-  JST_SPACE: [/[ \r\n\f]+/, null, 'JST'],
-  JST_PUNCHOR: [/[=!]?==|[-=><+*\/%\!]?\=|\|\||&&|\@\(|\.\.|[<\>\[\]\(\)\-\|\{}\+\*\/%?:\.!,]/, function(all){
-    return { type: all, value: all }
-  },'JST'],
-
-  JST_STRING:  [ /'([^']*)'|"([^"]*)"/, function(all, one, two){ //"'
-    return {type: 'STRING', value: one || two || ""}
-  }, 'JST'],
-  //åŒ¹é…æ•°å­— 88.99 æˆ–è€… 9e33
-  JST_NUMBER: [/(?:[0-9]*\.[0-9]+|[0-9]+)(e\d+)?/, function(all){
-    return {type: 'NUMBER', value: parseFloat(all, 10)};
-  }, 'JST']
+/**
+ * LexerµÄÖ÷Ìå£¬Ò»°ãnew Lexer(template).lex()
+ * @param {[type]} input [description]
+ * @param {[type]} opts  [description]
+ */
+function Lexer(input, opts){
+	this.input = input;
+	this.map = MAP;
+	//·ÖÎö´Ê·¨Ê±µÄË³Ğò
+	this.states = ['INIT']
 }
 
+Lexer.prototype.leave = function(state){
+	var lastState = this.states.pop();
+	if(state && (state !== lastState)) console.error('lexer.leaver³ö´í',state)
+}
+Lexer.prototype.enter = function(state){
+	this.states.push(state)
+}
+Lexer.prototype.lex = function(){
+	var str = this.input.trim(); //new LexerÊ±ÊäÈëµÄµÚÒ»¸ö²ÎÊı
+	var tokens=[], self = this,token;
+	this.index = 0;
+	var flag=0;
+	while(str.length>0){
+		var state = this.states[this.states.length-1]
+		var split = this.map[state]
+		var test = split.TRUNK.exec(str);
+		if(test===null) continue;
+		var mlen = test[0].length;
+		str = str.slice(mlen);
+		token = process(test,split,str)
+		token && tokens.push(token);
+		this.index += mlen;
+		if(flag++ > 1000){
+			break;
+		}
+	}
 
-// setup when first config
-Lexer.setup();
+	function process(args,split,str){
+		var links = split.links, token;
+		var flag = 0;
+		for(var len = links.length, i=0; i<len; i++){
+			var link = links[i],
+				handler = link[2],
+				curIndex = link[0];
+			if(args[curIndex]!==undefined){
+				if(typeof handler === 'function'){
+					token = handler.apply(self, args.slice(curIndex, curIndex + link[1]))
+					if(token){
+						token.pos = self.index
+						return token;
+					};
+				}else if(typeof handler === 'string'){
+					return {type :handler}
+				}
+			}
+			if(flag++ > 1000){
+				break;
+			}
+		}
+
+	}
+	tokens.push({
+		type:"EOF"
+	})
+	return tokens;
+}
 
 
 
 module.exports = Lexer;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

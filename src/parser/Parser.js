@@ -1,5 +1,6 @@
 var Lexer = require('./Lexer.js')
-
+var node = require('./node.js')
+var _ = require('../util.js')
 
 function Parser(input, opts){
 	opts = opts || {}
@@ -11,6 +12,9 @@ function Parser(input, opts){
 }
 
 var op = Parser.prototype;
+/**
+ * parse / program /statement 反复调用
+ */
 
 op.parse = function(){
   this.pos = 0;
@@ -22,6 +26,7 @@ op.parse = function(){
 }
 
 op.program = function(){
+  //反复调用 this.program 和 this.statement 来循环
   var statements = [],  ll = this.ll();
   while(ll.type !== 'EOF' && ll.type !=='TAG_CLOSE'){
 
@@ -32,65 +37,99 @@ op.program = function(){
   return statements;
 }
 
-op.ll =  function(k){
-  k = k || 1;
-  if(k < 0) k = k + 1;
-  var pos = this.pos + k - 1;
-  if(pos > this.length - 1){
-      return this.tokens[this.length-1];
-  }
-  return this.tokens[pos]; //找最后一个this.tokens里面的值
-}
+
 
 op.statement = function(){
   var ll = this.ll();
   switch(ll.type){
-    case 'NAME':
-    case 'TEXT':
-      var text = ll.value;
-      this.next();
-      while(ll = this.eat(['NAME', 'TEXT'])){
-        text += ll.value;
-      }
-      return node.text(text);
     case 'TAG_OPEN':
       return this.xml();
-    case 'OPEN': 
-      return this.directive();
     case 'EXPR_OPEN':
       return this.interplation();
     default:
-      this.error('Unexpected token: '+ this.la())
+      console.log('未对应ll.type ', ll.type )
   }
 }
+
+/**
+ * 解析 原始标签 <div></div>
+ */
 
 op.xml = function(){
-  var name, attrs, children, selfClosed;
-  name = this.match('TAG_OPEN').value;
-  attrs = this.attrs();
-  selfClosed = this.eat('/')
+  var tag, attrs, children, selfClosed;
+  tag = this.match('TAG_OPEN').value;
+  attrs = [];  //【待写  解析属性】
+  selfClosed = this.eat('/'); //判断是否是自闭和标签
   this.match('>');
-  if( !selfClosed && !_.isVoidTag(name) ){
-    children = this.program();
-    if(!this.eat('TAG_CLOSE', name)) this.error('expect </'+name+'> got'+ 'no matched closeTag')
+  if( !selfClosed ){
+    children = this.program(); //解析 {text} 部分
+    if(!this.eat('TAG_CLOSE')) console.log('无TAG_CLOSE')
   }
-  return node.element(name, attrs, children);
+  return node.element(tag, attrs, children);
 }
 
-op.attrs = function(isAttribute){
-  var eat
-  if(!isAttribute){
-    eat = ["NAME", "OPEN"]
+/**
+ * 解析 语法 {} 里面的
+ */
+op.interplation = function(){
+   this.match('EXPR_OPEN');
+   var res = this.expression();
+   this.match('END');
+   return res;
+ }
+
+op.expression = function(){
+   var expression;
+   if(this.eat('@(')){ //once bind 【待写 单词绑定】
+     // expression = this.expr();
+     // expression.once = true;
+     // this.match(')')
+   }else{
+     expression = this.expr();
+   }
+   return expression;
+ }
+
+//解析{}中间的语法
+op.expr = function(){
+   this.depend = [];
+
+   var buffer = this.filter()
+
+   var body = buffer.get || buffer;
+   var setbody = buffer.set;
+   return node.expression(body, setbody, !this.depend.length, buffer.filters);
+ }
+
+ //解析语法体
+op.filter = function(){
+  var ll = this.ll();
+  if(ll.type === 'IDENT' && !~ll.type.indexOf('.')){
+    this.next();
+    return {
+      get:'c._sg_("' + ll.value + '")'
+      ,set: 'c._ss_("' + ll.value + '")' 
+    }
+  }
+}
+
+
+
+
+
+/**
+ * 基础方法
+ */
+
+op.match = function(type, value){
+  var ll;
+  if(!(ll = this.eat(type, value))){
+    ll  = this.ll();
   }else{
-    eat = ["NAME"]
+    return ll;
   }
-
-  var attrs = [], ll;
-  while (ll = this.eat(eat)){
-    attrs.push(this.xentity( ll ))
-  }
-  return attrs;
 }
+
 
 op.eat = function(type, value){
   var ll = this.ll();
@@ -108,6 +147,21 @@ op.eat = function(type, value){
     }
   }
   return false;
+}
+
+op.next = function(k){
+  k = k || 1;
+  this.pos += k;
+}
+
+op.ll =  function(k){
+  k = k || 1;
+  if(k < 0) k = k + 1;
+  var pos = this.pos + k - 1;
+  if(pos > this.length - 1){
+      return this.tokens[this.length-1];
+  }
+  return this.tokens[pos]; //找最后一个this.tokens里面的值
 }
 
 module.exports = Parser;
