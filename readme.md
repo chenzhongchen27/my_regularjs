@@ -2,5 +2,8 @@
 本项目是对regularjs的简易实现，目前只实现了两点：   
 1,解析`<div>{text}<div>`，其中包括`div`这种元素类型，及`{text}`这种简单的expression类型。   
 2,在改变数据后，用 $update 进行更新的功能。   
-    
-涉及 Walker、watcher、lexer、ast等核心概念，及reguarjs的项目基本结构与实现原理。
+> 说明   
+
+涉及 Walker、watcher、lexer、Parser、AST，对reguarjs的项目基本结构与实现原理有了整体了解。在将来用到时可以较快的找到起作用的代码。从而明确功能或者修复bug.    
+
+没有涉及的，包括 属性、指令、list、if、事件、动画、事件 等等。  对于这部分没有涉及的，主要是因为对用 Lexter、Parser 进行解析的结果不明确等造成的，需要花费大量的时间。而目前来看并不是很有必要。
