@@ -1,0 +1,1 @@
+var Regular = require('./Regular.js')
